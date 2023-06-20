@@ -175,6 +175,22 @@ iomap_read_page_end_io(struct bio_vec *bvec, int error)
 	struct page *page = bvec->bv_page;
 	struct iomap_page *iop = to_iomap_page(page);
 
+#ifdef CONFIG_CONT_PTE_HUGEPAGE
+	if (PageCont(page)) {
+		/*NOTE: This scenario does not support PageCont!*/
+		BUG_ON(page_has_private(page));
+		if (unlikely(error)) {
+			ClearPageUptodate(page);
+			SetPageError(page);
+		}
+
+		if (!iop || atomic_sub_and_test(bvec->bv_len,
+		    &iop->read_bytes_pending))
+			set_cont_pte_uptodate_and_unlock(page);
+		return;
+	}
+#endif
+
 	if (unlikely(error)) {
 		ClearPageUptodate(page);
 		SetPageError(page);
@@ -1045,7 +1061,7 @@ iomap_finish_page_writeback(struct inode *inode, struct page *page,
 
 	if (error) {
 		SetPageError(page);
-		mapping_set_error(inode->i_mapping, -EIO);
+		mapping_set_error(inode->i_mapping, error);
 	}
 
 	WARN_ON_ONCE(i_blocks_per_page(inode, page) > 1 && !iop);
